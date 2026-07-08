@@ -4,17 +4,18 @@ const { db } = require("./db");
 
 const SALT_ROUNDS = 10;
 
-async function createUser(email, plainPassword) {
+async function createUser(email, plainPassword, role = "controller") {
   const existing = db.prepare("SELECT id FROM users WHERE email = ?").get(email);
   if (existing) {
     throw new Error("Bu email zaten kayıtlı.");
   }
+  const normalizedRole = role === "host" ? "host" : "controller";
   const passwordHash = await bcrypt.hash(plainPassword, SALT_ROUNDS);
   const stmt = db.prepare(`
-    INSERT INTO users (email, password_hash, tier) VALUES (?, ?, 'free')
+    INSERT INTO users (email, password_hash, tier, role) VALUES (?, ?, 'free', ?)
   `);
-  const info = stmt.run(email, passwordHash);
-  return { id: info.lastInsertRowid, email, tier: "free" };
+  const info = stmt.run(email, passwordHash, normalizedRole);
+  return { id: info.lastInsertRowid, email, tier: "free", role: normalizedRole };
 }
 
 async function verifyUser(email, plainPassword) {
@@ -23,12 +24,17 @@ async function verifyUser(email, plainPassword) {
   if (!user.is_active) return { user: null, reason: "inactive" };
   const match = await bcrypt.compare(plainPassword, user.password_hash);
   if (!match) return { user: null, reason: "wrong_password" };
-  return { user: { id: user.id, email: user.email, tier: user.tier }, reason: null };
+  return {
+    user: { id: user.id, email: user.email, tier: user.tier, role: user.role },
+    reason: null,
+  };
 }
 
 function getUserById(id) {
   const user = db
-    .prepare("SELECT id, email, tier, rustdesk_id, is_active, created_at FROM users WHERE id = ?")
+    .prepare(
+      "SELECT id, email, tier, role, rustdesk_id, is_active, created_at FROM users WHERE id = ?"
+    )
     .get(id);
   return user || null;
 }

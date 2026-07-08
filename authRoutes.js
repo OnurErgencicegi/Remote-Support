@@ -18,9 +18,11 @@ const SECRET = JWT_SECRET || "GELISTIRME-ICIN-GECICI-ANAHTAR-degistir";
 const TOKEN_EXPIRY = "30d";
 
 function signToken(user) {
-  return jwt.sign({ userId: user.id, email: user.email, tier: user.tier }, SECRET, {
-    expiresIn: TOKEN_EXPIRY,
-  });
+  return jwt.sign(
+    { userId: user.id, email: user.email, tier: user.tier, role: user.role },
+    SECRET,
+    { expiresIn: TOKEN_EXPIRY }
+  );
 }
 
 function isValidEmail(email) {
@@ -30,7 +32,7 @@ function isValidEmail(email) {
 // --- Kayıt ol ---
 router.post("/register", async (req, res) => {
   try {
-    const { email, password } = req.body || {};
+    const { email, password, role } = req.body || {};
 
     if (!email || !password) {
       return res.status(400).json({ error: "Email ve parola gerekli." });
@@ -41,12 +43,15 @@ router.post("/register", async (req, res) => {
     if (password.length < 6) {
       return res.status(400).json({ error: "Parola en az 6 karakter olmalı." });
     }
+    if (role && role !== "host" && role !== "controller") {
+      return res.status(400).json({ error: "Geçersiz rol." });
+    }
 
-    const user = await createUser(email.toLowerCase().trim(), password);
+    const user = await createUser(email.toLowerCase().trim(), password, role);
     const token = signToken(user);
 
-    logger.info(`Yeni kullanıcı kaydoldu: ${user.email}`);
-    res.json({ token, user: { email: user.email, tier: user.tier } });
+    logger.info(`Yeni kullanıcı kaydoldu: ${user.email} (${user.role})`);
+    res.json({ token, user: { email: user.email, tier: user.tier, role: user.role } });
   } catch (err) {
     logger.error("Register hatası:", err.message);
     res.status(400).json({ error: err.message });
@@ -74,8 +79,8 @@ router.post("/login", async (req, res) => {
     }
 
     const token = signToken(user);
-    logger.info(`Giriş yapıldı: ${user.email}`);
-    res.json({ token, user: { email: user.email, tier: user.tier } });
+    logger.info(`Giriş yapıldı: ${user.email} (${user.role})`);
+    res.json({ token, user: { email: user.email, tier: user.tier, role: user.role } });
   } catch (err) {
     logger.error("Login hatası:", err.message);
     res.status(500).json({ error: "Sunucu hatası." });
@@ -105,6 +110,7 @@ router.get("/me", requireAuth, (req, res) => {
   res.json({
     email: user.email,
     tier: user.tier,
+    role: user.role,
     rustdeskId: user.rustdesk_id,
     isActive: !!user.is_active,
     createdAt: user.created_at,

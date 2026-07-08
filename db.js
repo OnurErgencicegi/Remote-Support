@@ -13,11 +13,20 @@ db.exec(`
     email TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
     tier TEXT NOT NULL DEFAULT 'free',
+    role TEXT NOT NULL DEFAULT 'controller',
     rustdesk_id TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     is_active INTEGER NOT NULL DEFAULT 1
   );
 `);
+
+// Var olan (eski) veritabanlarında 'role' kolonu yoksa ekle.
+// Zaten varsa SQLite hata fırlatır, onu görmezden geliyoruz.
+try {
+  db.exec(`ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'controller'`);
+} catch (e) {
+  // "duplicate column name" bekleniyor, sorun değil.
+}
 
 // Basit oturum/giriş logu - ileride denetim için faydalı
 db.exec(`
