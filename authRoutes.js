@@ -3,7 +3,7 @@ const express = require("express");
 const jwt = require("jsonwebtoken");
 const { createUser, verifyUser, getUserById, setRustdeskId } = require("./authDb");
 const { logLoginAttempt } = require("./db");
-const { startConnection, getConnectionStatus } = require("./connectionsDb");
+const { startConnection, getConnectionStatus, verifyConnToken } = require("./connectionsDb");
 const logger = require("./logger");
 
 const router = express.Router();
@@ -164,7 +164,22 @@ router.post("/connections/start", requireAuth, (req, res) => {
     res.status(500).json({ error: "Sunucu hatası." });
   }
 });
-
+// --- hbbs'in doğrudan çağırdığı token doğrulama endpoint'i ---
+// NOT: requireAuth middleware'i YOK - çünkü bunu çağıran hbbs, bir kullanıcı
+// token'ı değil, kendi sunucu-sunucu isteğini yapıyor. Güvenlik, token'ın
+// kendisinin tahmin edilemez (24 byte rastgele) ve kısa ömürlü olmasından
+// geliyor. Ayrıca AUTH_SERVER_BASE 127.0.0.1 olduğu için bu endpoint dışarıya
+// hiç açık değil (hbbs ile aynı VPS'te, localhost üzerinden çağrılıyor).
+router.post("/connections/verify-token", (req, res) => {
+  try {
+    const { token, hostPeerId } = req.body || {};
+    const valid = verifyConnToken(token, hostPeerId);
+    return res.json({ valid });
+  } catch (err) {
+    logger.error("verify-token hatası:", err.message);
+    return res.json({ valid: false });
+  }
+});
 // --- Devam eden bir bağlantının süresi dolmuş mu diye client periyodik
 // olarak sorar (örn. her 30 saniyede bir) ---
 router.get("/connections/status", requireAuth, (req, res) => {

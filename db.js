@@ -19,7 +19,13 @@ db.exec(`
     is_active INTEGER NOT NULL DEFAULT 1
   );
 `);
-
+// RemoteSupport: conn_token sütunu, hbbs'in doğrudan (Node.js'e sorarak)
+// doğruladığı, tek bağlantıya özel kısa ömürlü bir tokendır.
+try {
+  db.exec(`ALTER TABLE connections ADD COLUMN conn_token TEXT`);
+} catch (e) {
+  // Sütun zaten varsa (SQLITE_ERROR: duplicate column) sessizce geç.
+}
 // Var olan (eski) veritabanlarında 'role' kolonu yoksa ekle.
 // Zaten varsa SQLite hata fırlatır, onu görmezden geliyoruz.
 try {

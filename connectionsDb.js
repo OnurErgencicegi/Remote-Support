@@ -7,25 +7,28 @@
 // Bunun yerine: her bağlantı 30 dakikalık bir oturumdur. Süre dolunca
 // client bağlantıyı otomatik kapatır ve kullanıcıya "free tier limitine
 // ulaştınız, tier yükseltin veya tekrar bağlanın" mesajı gösterir.
-// Kullanıcı istediği zaman tekrar "Bağlan"a basıp yeni bir 30dk'lık
-// oturum başlatabilir - kalıcı bir engelleme yok (free tier için).
 //
-// - Kayıt yoksa: yeni satır oluşturulur, expires_at = now + 30dk.
-// - Kayıt var ve süresi DOLMAMIŞSA: aynı expires_at aynen döner
-//   (idempotent - örn. client bağlantı koptuktan hemen sonra tekrar
-//   "Bağlan"a bastıysa, aynı oturumun kalan süresini kullanır).
-// - Kayıt var ve süresi DOLMUŞSA: satır güncellenir (yenilenir),
-//   expires_at = now + 30dk yeni bir oturum olarak başlar.
+// GÜVENLİK GÜNCELLEMESİ: artık her oturum için rastgele bir conn_token
+// üretiliyor. Bu token, hbbs (rendezvous_server.rs, patch'lenmiş sürüm)
+// tarafından, gerçek bağlantı (punch hole) isteği geldiğinde bu sunucuya
+// (POST /connections/verify-token) sorulup doğrulanıyor. Böylece
+// ConnectionGuard client-side kontrolü bypass edilse bile (örn. orijinal
+// RustDesk client'ı ile bağlanmaya çalışılırsa), hbbs bu token'ı bilmeyen
+// isteği en baştan reddeder.
 
+const crypto = require("crypto");
 const { db } = require("./db");
 
 const SESSION_DURATION_MS = 30 * 60 * 1000; // 30 dakika
 
+function generateToken() {
+  return crypto.randomBytes(24).toString("hex");
+}
+
 /**
  * Bir controller'ın bir host'a bağlanma isteğini değerlendirir.
  * Her zaman allowed:true döner (free tier için kalıcı engelleme yok);
- * ileride tier bazlı kısıtlama eklenirse (örn. eş zamanlı bağlantı
- * limiti, aylık bağlantı sayısı) burada allowed:false dönebilecek
+ * ileride tier bazlı kısıtlama eklenirse burada allowed:false dönebilecek
  * ek kontroller eklenebilir.
  */
 function startConnection(controllerUserId, hostPeerId) {
@@ -41,26 +44,38 @@ function startConnection(controllerUserId, hostPeerId) {
     const stillActive = new Date(existing.expires_at).getTime() > now;
 
     if (stillActive) {
-      // Mevcut oturum hâlâ geçerli - aynen döndür (yeni süre başlatma).
-      return { allowed: true, expiresAt: existing.expires_at, renewed: false };
+      // Mevcut oturum hâlâ geçerli - aynı token/expiresAt'i döndür.
+      return {
+        allowed: true,
+        expiresAt: existing.expires_at,
+        connToken: existing.conn_token,
+        renewed: false,
+      };
     }
 
-    // Süresi dolmuş - yeni bir 30dk'lık oturum olarak yenile.
+    // Süresi dolmuş - yeni bir 30dk'lık oturum + yeni token.
     const newExpiresAt = new Date(now + SESSION_DURATION_MS).toISOString();
+    const newToken = generateToken();
     db.prepare(
-      `UPDATE connections SET expires_at = ?, started_at = CURRENT_TIMESTAMP WHERE id = ?`
-    ).run(newExpiresAt, existing.id);
-    return { allowed: true, expiresAt: newExpiresAt, renewed: true };
+      `UPDATE connections SET expires_at = ?, conn_token = ?, started_at = CURRENT_TIMESTAMP WHERE id = ?`
+    ).run(newExpiresAt, newToken, existing.id);
+    return {
+      allowed: true,
+      expiresAt: newExpiresAt,
+      connToken: newToken,
+      renewed: true,
+    };
   }
 
   // Hiç kayıt yok - ilk oturumu oluştur.
   const expiresAt = new Date(now + SESSION_DURATION_MS).toISOString();
+  const token = generateToken();
   db.prepare(
-    `INSERT INTO connections (controller_user_id, host_peer_id, expires_at)
-     VALUES (?, ?, ?)`
-  ).run(controllerUserId, hostPeerId, expiresAt);
+    `INSERT INTO connections (controller_user_id, host_peer_id, expires_at, conn_token)
+     VALUES (?, ?, ?, ?)`
+  ).run(controllerUserId, hostPeerId, expiresAt, token);
 
-  return { allowed: true, expiresAt, renewed: false };
+  return { allowed: true, expiresAt, connToken: token, renewed: false };
 }
 
 /**
@@ -82,4 +97,28 @@ function getConnectionStatus(controllerUserId, hostPeerId) {
   return { found: true, expiresAt: row.expires_at, expired };
 }
 
-module.exports = { startConnection, getConnectionStatus, SESSION_DURATION_MS };
+/**
+ * RemoteSupport: hbbs'in doğrudan çağırdığı doğrulama fonksiyonu.
+ * Token, ilgili host_peer_id için kayıtlı olmalı VE süresi dolmamış olmalı.
+ */
+function verifyConnToken(token, hostPeerId) {
+  if (!token || !hostPeerId) return false;
+
+  const row = db
+    .prepare(
+      `SELECT * FROM connections WHERE conn_token = ? AND host_peer_id = ?`
+    )
+    .get(token, hostPeerId);
+
+  if (!row) return false;
+
+  const stillActive = new Date(row.expires_at).getTime() > Date.now();
+  return stillActive;
+}
+
+module.exports = {
+  startConnection,
+  getConnectionStatus,
+  verifyConnToken,
+  SESSION_DURATION_MS,
+};
