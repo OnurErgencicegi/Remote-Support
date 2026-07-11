@@ -136,44 +136,54 @@ router.post("/me/rustdesk-id", requireAuth, (req, res) => {
 //  - Daha önce bağlanmışsa (süresi dolmuş olsa bile): reddedilir - aynı
 //    ikili bir daha asla eşleşemez.
 router.post("/connections/start", requireAuth, (req, res) => {
-  const { hostPeerId } = req.body || {};
-  if (!hostPeerId) {
-    return res.status(400).json({ error: "hostPeerId gerekli." });
-  }
+  try {
+    const { hostPeerId } = req.body || {};
+    if (!hostPeerId) {
+      return res.status(400).json({ error: "hostPeerId gerekli." });
+    }
 
-  const result = startConnection(req.user.userId, String(hostPeerId).trim());
+    const result = startConnection(req.user.userId, String(hostPeerId).trim());
 
-  if (!result.allowed) {
+    if (!result.allowed) {
+      logger.info(
+        `Bağlantı reddedildi (tekrar kullanım): user=${req.user.email} host=${hostPeerId}`
+      );
+      return res.status(403).json({
+        error: "Bu bilgisayara daha önce bağlandınız, tekrar bağlanamazsınız.",
+        reason: result.reason,
+        expiresAt: result.expiresAt,
+      });
+    }
+
     logger.info(
-      `Bağlantı reddedildi (tekrar kullanım): user=${req.user.email} host=${hostPeerId}`
+      `Yeni bağlantı başlatıldı: user=${req.user.email} host=${hostPeerId} expiresAt=${result.expiresAt}`
     );
-    return res.status(403).json({
-      error: "Bu bilgisayara daha önce bağlandınız, tekrar bağlanamazsınız.",
-      reason: result.reason,
-      expiresAt: result.expiresAt,
-    });
+    res.json({ allowed: true, expiresAt: result.expiresAt });
+  } catch (err) {
+    logger.error("Connection start hatası:", err.message);
+    res.status(500).json({ error: "Sunucu hatası." });
   }
-
-  logger.info(
-    `Yeni bağlantı başlatıldı: user=${req.user.email} host=${hostPeerId} expiresAt=${result.expiresAt}`
-  );
-  res.json({ allowed: true, expiresAt: result.expiresAt });
 });
 
 // --- Devam eden bir bağlantının süresi dolmuş mu diye client periyodik
 // olarak sorar (örn. her 30 saniyede bir) ---
 router.get("/connections/status", requireAuth, (req, res) => {
-  const { hostPeerId } = req.query || {};
-  if (!hostPeerId) {
-    return res.status(400).json({ error: "hostPeerId gerekli." });
-  }
+  try {
+    const { hostPeerId } = req.query || {};
+    if (!hostPeerId) {
+      return res.status(400).json({ error: "hostPeerId gerekli." });
+    }
 
-  const status = getConnectionStatus(req.user.userId, String(hostPeerId).trim());
-  if (!status.found) {
-    return res.status(404).json({ error: "Bu host için bir bağlantı kaydı yok." });
-  }
+    const status = getConnectionStatus(req.user.userId, String(hostPeerId).trim());
+    if (!status.found) {
+      return res.status(404).json({ error: "Bu host için bir bağlantı kaydı yok." });
+    }
 
-  res.json(status);
+    res.json(status);
+  } catch (err) {
+    logger.error("Connection status hatası:", err.message);
+    res.status(500).json({ error: "Sunucu hatası." });
+  }
 });
 
 module.exports = { router, requireAuth };
