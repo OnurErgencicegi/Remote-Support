@@ -1,61 +1,68 @@
-// src/authDb.js
-const bcrypt = require("bcryptjs");
-const { db } = require("./db");
+// src/db.js
+const path = require("path");
+const Database = require("better-sqlite3");
 
-const SALT_ROUNDS = 10;
+const DB_PATH = path.join(__dirname, "data", "auth.db");
 
-async function createUser(email, plainPassword, role = "controller") {
-  const existing = db.prepare("SELECT id FROM users WHERE email = ?").get(email);
-  if (existing) {
-    throw new Error("Bu email zaten kayıtlı.");
-  }
-  const normalizedRole = role === "host" ? "host" : "controller";
-  const passwordHash = await bcrypt.hash(plainPassword, SALT_ROUNDS);
+const db = new Database(DB_PATH);
+db.pragma("journal_mode = WAL");
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    tier TEXT NOT NULL DEFAULT 'free',
+    role TEXT NOT NULL DEFAULT 'controller',
+    rustdesk_id TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    is_active INTEGER NOT NULL DEFAULT 1
+  );
+`);
+
+// Var olan (eski) veritabanlarında 'role' kolonu yoksa ekle.
+// Zaten varsa SQLite hata fırlatır, onu görmezden geliyoruz.
+try {
+  db.exec(`ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'controller'`);
+} catch (e) {
+  // "duplicate column name" bekleniyor, sorun değil.
+}
+
+// Basit oturum/giriş logu - ileride denetim için faydalı
+db.exec(`
+  CREATE TABLE IF NOT EXISTS login_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    email TEXT,
+    success INTEGER NOT NULL,
+    ip_address TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
+`);
+
+function logLoginAttempt(userId, email, success, ipAddress) {
   const stmt = db.prepare(`
-    INSERT INTO users (email, password_hash, tier, role) VALUES (?, ?, 'free', ?)
+    INSERT INTO login_logs (user_id, email, success, ip_address)
+    VALUES (?, ?, ?, ?)
   `);
-  const info = stmt.run(email, passwordHash, normalizedRole);
-  return { id: info.lastInsertRowid, email, tier: "free", role: normalizedRole };
+  stmt.run(userId, email, success ? 1 : 0, ipAddress || null);
 }
 
-async function verifyUser(email, plainPassword) {
-  const user = db.prepare("SELECT * FROM users WHERE email = ?").get(email);
-  if (!user) return { user: null, reason: "not_found" };
-  if (!user.is_active) return { user: null, reason: "inactive" };
-  const match = await bcrypt.compare(plainPassword, user.password_hash);
-  if (!match) return { user: null, reason: "wrong_password" };
-  return {
-    user: { id: user.id, email: user.email, tier: user.tier, role: user.role },
-    reason: null,
-  };
-}
+// RemoteSupport: controller <-> host bağlantı kullanım kaydı.
+// Amaç: (a) bir controller bir host'a en fazla bir kez bağlanabilsin
+// (aynı ikili tekrar eşleşemez), (b) her bağlantının 30 dakikalık bir
+// süre sınırı olsun (expires_at). UNIQUE(controller_user_id, host_peer_id)
+// sayesinde aynı ikili için ikinci bir satır oluşturulamaz - bu, "tekrar
+// bağlanamama" kuralını veritabanı seviyesinde garanti eder.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS connections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    controller_user_id INTEGER NOT NULL,
+    host_peer_id TEXT NOT NULL,
+    started_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    expires_at TEXT NOT NULL,
+    UNIQUE(controller_user_id, host_peer_id)
+  );
+`);
 
-function getUserById(id) {
-  const user = db
-    .prepare(
-      "SELECT id, email, tier, role, rustdesk_id, is_active, created_at FROM users WHERE id = ?"
-    )
-    .get(id);
-  return user || null;
-}
-
-function setRustdeskId(userId, rustdeskId) {
-  db.prepare("UPDATE users SET rustdesk_id = ? WHERE id = ?").run(rustdeskId, userId);
-}
-
-function setTier(userId, tier) {
-  db.prepare("UPDATE users SET tier = ? WHERE id = ?").run(tier, userId);
-}
-
-function setActive(userId, isActive) {
-  db.prepare("UPDATE users SET is_active = ? WHERE id = ?").run(isActive ? 1 : 0, userId);
-}
-
-module.exports = {
-  createUser,
-  verifyUser,
-  getUserById,
-  setRustdeskId,
-  setTier,
-  setActive,
-};
+module.exports = { db, logLoginAttempt };
