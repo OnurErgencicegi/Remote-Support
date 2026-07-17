@@ -158,7 +158,7 @@ router.post("/connections/start", requireAuth, (req, res) => {
     logger.info(
       `Yeni bağlantı başlatıldı: user=${req.user.email} host=${hostPeerId} expiresAt=${result.expiresAt}`
     );
-    res.json({ allowed: true, expiresAt: result.expiresAt });
+    res.json({ allowed: true, expiresAt: result.expiresAt, connToken: result.connToken });
   } catch (err) {
     logger.error("Connection start hatası:", err.message);
     res.status(500).json({ error: "Sunucu hatası." });

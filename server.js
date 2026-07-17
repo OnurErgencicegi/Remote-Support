@@ -6,14 +6,22 @@
 
 const express = require("express");
 const cors = require("cors");
-const logger = require("./src/logger");
-const { router: authRouter } = require("./src/authRoutes");
+const logger = require("./logger");
+const { router: authRouter }  = require("./authRoutes");
 
 const PORT = process.env.PORT || 4000;
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+app.use((err, req, res, next) => {
+  if (err.type === "entity.parse.failed" || err instanceof SyntaxError) {
+    logger.info("Gecersiz JSON istegi reddedildi: " + req.method + " " + req.path);
+    return res.status(400).json({ error: "Invalid JSON" });
+  }
+  next(err);
+});
 
 app.use("/auth", authRouter);
 
