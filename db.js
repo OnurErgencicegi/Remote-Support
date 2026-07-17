@@ -53,5 +53,32 @@ function logLoginAttempt(userId, email, success, ipAddress) {
   `);
   stmt.run(userId, email, success ? 1 : 0, ipAddress || null);
 }
+// RemoteSupport: host'ların kalıcı şifresini tutan tablo. Host login
+// olmadan çalıştığı için user_id değil, RustDesk ID (host_id) anahtar.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS host_passwords (
+    host_id TEXT PRIMARY KEY,
+    password TEXT NOT NULL,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
+`);
 
-module.exports = { db, logLoginAttempt };
+function getHostPassword(hostId) {
+  const row = db
+    .prepare(`SELECT password FROM host_passwords WHERE host_id = ?`)
+    .get(hostId);
+  return row ? row.password : null;
+}
+
+function setHostPassword(hostId, password) {
+  db.prepare(
+    `
+    INSERT INTO host_passwords (host_id, password, updated_at)
+    VALUES (?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(host_id) DO UPDATE SET
+      password = excluded.password,
+      updated_at = CURRENT_TIMESTAMP
+  `
+  ).run(hostId, password);
+}
+module.exports = { db, logLoginAttempt, getHostPassword, setHostPassword };

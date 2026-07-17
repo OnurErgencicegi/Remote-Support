@@ -1,8 +1,8 @@
 // src/authRoutes.js
 const express = require("express");
+const { db, logLoginAttempt, getHostPassword, setHostPassword } = require("./db");
 const jwt = require("jsonwebtoken");
 const { createUser, verifyUser, getUserById, setRustdeskId } = require("./authDb");
-const { logLoginAttempt } = require("./db");
 const { startConnection, getConnectionStatus, verifyConnToken } = require("./connectionsDb");
 const logger = require("./logger");
 
@@ -17,6 +17,45 @@ if (!JWT_SECRET) {
 }
 const SECRET = JWT_SECRET || "GELISTIRME-ICIN-GECICI-ANAHTAR-degistir";
 const TOKEN_EXPIRY = "30d";
+
+// RemoteSupport: /host/password endpoint'lerini rastgele taramadan korumak
+// için paylaşılan secret. Host henüz login olmadan çalıştığı için (JWT
+// token'ı yok), bu endpoint'ler requireAuth yerine bu basit header
+// kontrolüyle korunuyor.
+const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY;
+if (!INTERNAL_API_KEY) {
+  logger.warn(
+    "INTERNAL_API_KEY ortam değişkeni tanımlı değil! /host/password endpoint'leri korumasız kalacak."
+  );
+}
+
+function internalKeyGuard(req, res, next) {
+  const key = req.header("X-Internal-Key");
+  if (!INTERNAL_API_KEY || key !== INTERNAL_API_KEY) {
+    return res.status(401).json({ error: "Yetkisiz." });
+  }
+  next();
+}
+
+// RemoteSupport: basit, bellek-içi rate limiter (ekstra paket gerekmez).
+// Aynı IP'den dakikada 20'den fazla istek gelirse 429 döner.
+const _hostPwHits = new Map(); // ip -> { count, windowStart }
+function hostPasswordLimiter(req, res, next) {
+  const ip = req.ip;
+  const now = Date.now();
+  const windowMs = 60 * 1000;
+  const maxHits = 20;
+  const entry = _hostPwHits.get(ip);
+  if (!entry || now - entry.windowStart > windowMs) {
+    _hostPwHits.set(ip, { count: 1, windowStart: now });
+    return next();
+  }
+  entry.count += 1;
+  if (entry.count > maxHits) {
+    return res.status(429).json({ error: "Çok fazla istek, lütfen bekleyin." });
+  }
+  next();
+}
 
 function signToken(user) {
   return jwt.sign(
@@ -164,6 +203,7 @@ router.post("/connections/start", requireAuth, (req, res) => {
     res.status(500).json({ error: "Sunucu hatası." });
   }
 });
+
 // --- hbbs'in doğrudan çağırdığı token doğrulama endpoint'i ---
 // NOT: requireAuth middleware'i YOK - çünkü bunu çağıran hbbs, bir kullanıcı
 // token'ı değil, kendi sunucu-sunucu isteğini yapıyor. Güvenlik, token'ın
@@ -180,6 +220,7 @@ router.post("/connections/verify-token", (req, res) => {
     return res.json({ valid: false });
   }
 });
+
 // --- Devam eden bir bağlantının süresi dolmuş mu diye client periyodik
 // olarak sorar (örn. her 30 saniyede bir) ---
 router.get("/connections/status", requireAuth, (req, res) => {
@@ -197,6 +238,41 @@ router.get("/connections/status", requireAuth, (req, res) => {
     res.json(status);
   } catch (err) {
     logger.error("Connection status hatası:", err.message);
+    res.status(500).json({ error: "Sunucu hatası." });
+  }
+});
+
+// --- Host kalıcı şifresini oku ---
+// requireAuth YOK (host login olmadan çalışıyor), bunun yerine
+// internalKeyGuard + rate limiter ile korunuyor (bkz. yukarıdaki not).
+router.get("/host/password", internalKeyGuard, hostPasswordLimiter, (req, res) => {
+  try {
+    const { hostId } = req.query || {};
+    if (!hostId) {
+      return res.status(400).json({ error: "hostId gerekli." });
+    }
+    const password = getHostPassword(String(hostId).trim());
+    res.json({ password });
+  } catch (err) {
+    logger.error("GET /host/password hatası:", err.message);
+    res.status(500).json({ error: "Sunucu hatası." });
+  }
+});
+
+// --- Host kalıcı şifresini yaz/güncelle ---
+router.post("/host/password", internalKeyGuard, hostPasswordLimiter, (req, res) => {
+  try {
+    const { hostId, password } = req.body || {};
+    if (!hostId || !password) {
+      return res.status(400).json({ error: "hostId ve password gerekli." });
+    }
+    if (password.length < 6) {
+      return res.status(400).json({ error: "Parola en az 6 karakter olmalı." });
+    }
+    setHostPassword(String(hostId).trim(), password);
+    res.json({ ok: true });
+  } catch (err) {
+    logger.error("POST /host/password hatası:", err.message);
     res.status(500).json({ error: "Sunucu hatası." });
   }
 });
