@@ -1,13 +1,13 @@
-// src/authDb.js
+﻿// src/authDb.js
 const bcrypt = require("bcryptjs");
+const crypto = require("crypto");
 const { db } = require("./db");
-
 const SALT_ROUNDS = 10;
 
 async function createUser(email, plainPassword, role = "controller") {
   const existing = db.prepare("SELECT id FROM users WHERE email = ?").get(email);
   if (existing) {
-    throw new Error("Bu email zaten kayıtlı.");
+    throw new Error("Bu email zaten kayitli.");
   }
   const normalizedRole = role === "host" ? "host" : "controller";
   const passwordHash = await bcrypt.hash(plainPassword, SALT_ROUNDS);
@@ -39,6 +39,10 @@ function getUserById(id) {
   return user || null;
 }
 
+function getUserByEmail(email) {
+  return db.prepare("SELECT * FROM users WHERE email = ?").get(email) || null;
+}
+
 function setRustdeskId(userId, rustdeskId) {
   db.prepare("UPDATE users SET rustdesk_id = ? WHERE id = ?").run(rustdeskId, userId);
 }
@@ -51,11 +55,73 @@ function setActive(userId, isActive) {
   db.prepare("UPDATE users SET is_active = ? WHERE id = ?").run(isActive ? 1 : 0, userId);
 }
 
+// --- Email dogrulama ---
+function createEmailVerification(userId) {
+  const code = String(Math.floor(100000 + Math.random() * 900000));
+  const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+  db.prepare(`
+    INSERT INTO email_verifications (user_id, code, expires_at) VALUES (?, ?, ?)
+  `).run(userId, code, expiresAt);
+  return code;
+}
+
+function verifyEmailCode(userId, code) {
+  const row = db.prepare(`
+    SELECT * FROM email_verifications
+    WHERE user_id = ? AND code = ? AND used = 0
+    ORDER BY id DESC LIMIT 1
+  `).get(userId, code);
+
+  if (!row) return { success: false, reason: "invalid_code" };
+  if (new Date(row.expires_at) < new Date()) return { success: false, reason: "expired" };
+
+  db.prepare(`UPDATE email_verifications SET used = 1 WHERE id = ?`).run(row.id);
+  db.prepare(`UPDATE users SET email_verified = 1 WHERE id = ?`).run(userId);
+  return { success: true };
+}
+
+function isEmailVerified(userId) {
+  const row = db.prepare("SELECT email_verified FROM users WHERE id = ?").get(userId);
+  return !!(row && row.email_verified);
+}
+
+// --- Sifremi unuttum (kod tabanli) ---
+function createPasswordReset(userId) {
+  const code = String(Math.floor(100000 + Math.random() * 900000));
+  const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+  db.prepare(`
+    INSERT INTO password_resets (user_id, token, expires_at) VALUES (?, ?, ?)
+  `).run(userId, code, expiresAt);
+  return code;
+}
+
+async function resetPasswordWithToken(userId, code, newPassword) {
+  const row = db.prepare(`
+    SELECT * FROM password_resets
+    WHERE user_id = ? AND token = ? AND used = 0
+    ORDER BY id DESC LIMIT 1
+  `).get(userId, code);
+
+  if (!row) return { success: false, reason: "invalid_code" };
+  if (new Date(row.expires_at) < new Date()) return { success: false, reason: "expired" };
+
+  const passwordHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
+  db.prepare(`UPDATE users SET password_hash = ? WHERE id = ?`).run(passwordHash, userId);
+  db.prepare(`UPDATE password_resets SET used = 1 WHERE id = ?`).run(row.id);
+  return { success: true };
+}
+
 module.exports = {
   createUser,
   verifyUser,
   getUserById,
+  getUserByEmail,
   setRustdeskId,
   setTier,
   setActive,
+  createEmailVerification,
+  verifyEmailCode,
+  isEmailVerified,
+  createPasswordReset,
+  resetPasswordWithToken,
 };
