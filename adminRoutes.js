@@ -64,7 +64,7 @@ router.get("/users", (req, res) => {
 // from/to: ISO tarih (started_at aralığı)
 router.get("/connections", (req, res) => {
   try {
-    const { user, host, from, to } = req.query;
+    const { user, host, from, to, activeOnly } = req.query;
     const page = Math.max(1, parseInt(req.query.page || "1", 10));
     const pageSize = Math.min(
       200,
@@ -90,6 +90,11 @@ router.get("/connections", (req, res) => {
     if (to) {
       conditions.push("c.started_at <= ?");
       params.push(to);
+    }
+    if (activeOnly === "1" || activeOnly === "true") {
+      // RemoteSupport: datetime() ile normalize - expires_at ISO 8601,
+      // datetime('now') SQLite format, dogrudan karsilastirma hatali olur.
+      conditions.push("datetime(c.expires_at) > datetime('now')");
     }
 
     const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
@@ -178,8 +183,12 @@ router.get("/stats", (req, res) => {
     const verifiedUsers = db
       .prepare(`SELECT COUNT(*) as cnt FROM users WHERE email_verified = 1`)
       .get().cnt;
+    // RemoteSupport: expires_at ISO 8601 formatinda tutuluyor
+    // (2026-07-19T10:15:00.000Z), datetime('now') ise "2026-07-19 10:15:00"
+    // formatinda - duz metin karsilastirmasi 'T' vs bosluk yuzunden yanlis
+    // sonuc verebiliyor. datetime(expires_at) ile normalize edip karsilastir.
     const activeConnections = db
-      .prepare(`SELECT COUNT(*) as cnt FROM connections WHERE expires_at > datetime('now')`)
+      .prepare(`SELECT COUNT(*) as cnt FROM connections WHERE datetime(expires_at) > datetime('now')`)
       .get().cnt;
     const totalConnections = db.prepare(`SELECT COUNT(*) as cnt FROM connections`).get().cnt;
 

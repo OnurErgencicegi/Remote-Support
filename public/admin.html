@@ -204,6 +204,9 @@
       <input type="text" id="filterHost" placeholder="Host ID..." />
       <input type="date" id="filterFrom" />
       <input type="date" id="filterTo" />
+      <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:#cbd5e1; white-space:nowrap;">
+        <input type="checkbox" id="activeOnlyCheckbox" style="width:auto;" /> Sadece Aktif
+      </label>
       <button id="connSearchBtn">Filtrele</button>
     </div>
     <table>
@@ -314,9 +317,18 @@ async function loadStats() {
     row.innerHTML = `
       <div class="stat-card"><div class="value">${data.totalUsers}</div><div class="label">Toplam Kullanıcı</div></div>
       <div class="stat-card"><div class="value">${data.verifiedUsers}</div><div class="label">Doğrulanmış</div></div>
-      <div class="stat-card"><div class="value">${data.activeConnections}</div><div class="label">Aktif Bağlantı</div></div>
+      <div class="stat-card" id="activeConnCard" style="cursor:pointer;" title="Tıkla: sadece aktif bağlantıları göster"><div class="value">${data.activeConnections}</div><div class="label">Aktif Bağlantı</div></div>
       <div class="stat-card"><div class="value">${data.totalConnections}</div><div class="label">Toplam Bağlantı</div></div>
     `;
+    const activeCard = document.getElementById('activeConnCard');
+    if (activeCard) {
+      activeCard.onclick = () => {
+        document.getElementById('activeOnlyCheckbox').checked = true;
+        connPage = 1;
+        loadConnections();
+        document.getElementById('connectionsTableBody').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      };
+    }
   } catch (e) { /* sessiz geç, oturum kontrolü zaten apiGet'te */ }
 }
 
@@ -354,12 +366,14 @@ async function loadConnections() {
   const host = document.getElementById('filterHost').value.trim();
   const from = document.getElementById('filterFrom').value;
   const to = document.getElementById('filterTo').value;
+  const activeOnly = document.getElementById('activeOnlyCheckbox').checked;
 
   const params = new URLSearchParams();
   if (user) params.set('user', user);
   if (host) params.set('host', host);
   if (from) params.set('from', from);
   if (to) params.set('to', to);
+  if (activeOnly) params.set('activeOnly', '1');
   params.set('page', connPage);
   params.set('pageSize', connPageSize);
 
