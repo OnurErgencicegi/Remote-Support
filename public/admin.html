@@ -179,6 +179,7 @@
   </header>
 
   <div class="stats" id="statsRow"></div>
+  <div class="stats" id="systemStatsRow"></div>
 
   <div class="section">
     <h2>Kullanıcılar</h2>
@@ -231,6 +232,26 @@
   <div id="modalBox">
     <button id="modalCloseBtn">✕</button>
     <h2 id="modalTitle"></h2>
+
+    <div id="modalTierInfo" style="background:#0f1115; border-radius:8px; padding:14px; margin-bottom:16px; font-size:13px;">
+      <!-- JS ile doldurulur -->
+    </div>
+
+    <div style="background:#0f1115; border-radius:8px; padding:14px; margin-bottom:20px;">
+      <div style="font-size:13px; color:#9ca3af; margin-bottom:10px;">Tier Yönetimi</div>
+      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+        <select id="tierSelect" style="padding:8px 10px; border-radius:6px; border:1px solid #2c2f38; background:#1a1d24; color:#e4e6eb; font-size:13px;">
+          <option value="free">Free</option>
+          <option value="pro">Pro</option>
+        </select>
+        <input type="number" id="tierMonthsInput" placeholder="Kaç ay?" min="1" value="1"
+          style="width:90px; padding:8px 10px; border-radius:6px; border:1px solid #2c2f38; background:#1a1d24; color:#e4e6eb; font-size:13px;" />
+        <button id="tierSaveBtn" style="padding:8px 16px; border-radius:6px; border:none; background:#4f7dfa; color:white; cursor:pointer; font-size:13px; font-weight:600;">Kaydet</button>
+      </div>
+      <div id="tierSaveMsg" style="font-size:12px; margin-top:8px;"></div>
+    </div>
+
+    <div style="font-size:13px; color:#9ca3af; margin-bottom:10px;">Bağlantı Geçmişi</div>
     <table>
       <thead>
         <tr><th>Host ID</th><th>Başlangıç</th><th>Süre (dk)</th><th>Durum</th></tr>
@@ -253,12 +274,17 @@ function authHeaders() {
   return { 'Authorization': 'Bearer ' + adminToken, 'Content-Type': 'application/json' };
 }
 
+let systemStatsInterval = null;
+
 function showDashboard() {
   document.getElementById('loginScreen').classList.add('hidden');
   document.getElementById('dashboard').classList.remove('hidden');
   loadStats();
   loadUsers();
   loadConnections();
+  loadSystemStats();
+  if (systemStatsInterval) clearInterval(systemStatsInterval);
+  systemStatsInterval = setInterval(loadSystemStats, 5000);
 }
 
 function showLogin() {
@@ -296,6 +322,7 @@ document.getElementById('passwordInput').addEventListener('keydown', (e) => {
 document.getElementById('logoutBtn').onclick = () => {
   adminToken = null;
   localStorage.removeItem('rs_admin_token');
+  if (systemStatsInterval) clearInterval(systemStatsInterval);
   showLogin();
 };
 
@@ -308,6 +335,21 @@ async function apiGet(path) {
     throw new Error('Oturum süresi doldu.');
   }
   return resp.json();
+}
+
+async function loadSystemStats() {
+  try {
+    const data = await apiGet('/admin/system-stats');
+    const row = document.getElementById('systemStatsRow');
+    const uptimeHours = Math.floor(data.uptimeSeconds / 3600);
+    const cpuColor = data.cpuLoadPercent >= 80 ? '#f87171' : (data.cpuLoadPercent >= 50 ? '#fbbf24' : '#4ade80');
+    const memColor = data.memUsedPercent >= 80 ? '#f87171' : (data.memUsedPercent >= 50 ? '#fbbf24' : '#4ade80');
+    row.innerHTML = `
+      <div class="stat-card"><div class="value" style="color:${cpuColor};">${data.cpuLoadPercent}%</div><div class="label">CPU Yükü (${data.cpuCount} çekirdek)</div></div>
+      <div class="stat-card"><div class="value" style="color:${memColor};">${data.memUsedPercent}%</div><div class="label">RAM (${data.memUsedMB} / ${data.memTotalMB} MB)</div></div>
+      <div class="stat-card"><div class="value">${uptimeHours}s</div><div class="label">Sunucu Uptime</div></div>
+    `;
+  } catch (e) { /* sessiz geç */ }
 }
 
 async function loadStats() {
@@ -352,7 +394,7 @@ async function loadUsers() {
       tr.innerHTML = `
         <td>${escapeHtml(u.email)}</td>
         <td>${escapeHtml(u.role)}</td>
-        <td><span class="badge badge-tier">${escapeHtml(u.tier)}</span></td>
+        <td><span class="badge ${u.proActive ? 'badge-active' : 'badge-tier'}">${u.proActive ? 'Pro' : (u.tier === 'pro' ? 'Pro (bitti)' : 'Free')}</span></td>
         <td><span class="badge ${u.email_verified ? 'badge-verified' : 'badge-unverified'}">${u.email_verified ? 'Evet' : 'Hayır'}</span></td>
         <td>${formatDate(u.created_at)}</td>
       `;
@@ -405,32 +447,123 @@ async function loadConnections() {
   } catch (e) { console.error(e); }
 }
 
+let currentModalUserId = null;
+
 async function openUserDetail(userId, email) {
-  document.getElementById('modalTitle').textContent = email + ' — Bağlantı Geçmişi';
+  currentModalUserId = userId;
+  document.getElementById('modalTitle').textContent = email;
   const tbody = document.getElementById('modalTableBody');
   const emptyMsg = document.getElementById('modalEmptyMsg');
+  const tierInfo = document.getElementById('modalTierInfo');
+  const tierSaveMsg = document.getElementById('tierSaveMsg');
   tbody.innerHTML = '';
   emptyMsg.classList.add('hidden');
+  tierInfo.innerHTML = 'Yükleniyor...';
+  tierSaveMsg.textContent = '';
   document.getElementById('modalOverlay').classList.remove('hidden');
 
   try {
-    const data = await apiGet('/admin/users/' + userId + '/connections');
-    if (!data.connections || data.connections.length === 0) {
+    const [userData, connData] = await Promise.all([
+      apiGet('/admin/users/' + userId),
+      apiGet('/admin/users/' + userId + '/connections'),
+    ]);
+
+    renderTierInfo(userData);
+    document.getElementById('tierSelect').value = userData.tier;
+
+    if (!connData.connections || connData.connections.length === 0) {
       emptyMsg.classList.remove('hidden');
-      return;
+    } else {
+      connData.connections.forEach(c => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${escapeHtml(c.host_peer_id)}</td>
+          <td>${formatDate(c.started_at)}</td>
+          <td>${c.durationMinutes}</td>
+          <td><span class="badge ${c.active ? 'badge-active' : 'badge-expired'}">${c.active ? 'Aktif' : 'Süresi Doldu'}</span></td>
+        `;
+        tbody.appendChild(tr);
+      });
     }
-    data.connections.forEach(c => {
-      const tr = document.createElement('tr');
-      tr.innerHTML = `
-        <td>${escapeHtml(c.host_peer_id)}</td>
-        <td>${formatDate(c.started_at)}</td>
-        <td>${c.durationMinutes}</td>
-        <td><span class="badge ${c.active ? 'badge-active' : 'badge-expired'}">${c.active ? 'Aktif' : 'Süresi Doldu'}</span></td>
-      `;
-      tbody.appendChild(tr);
-    });
   } catch (e) { console.error(e); }
 }
+
+function renderTierInfo(userData) {
+  const tierInfo = document.getElementById('modalTierInfo');
+  const tierBadgeClass = userData.proActive ? 'badge-active' : 'badge-tier';
+  const tierLabel = userData.proActive
+    ? 'Pro'
+    : (userData.tier === 'pro' ? 'Pro (süresi doldu)' : 'Free');
+
+  let expiryLine = '';
+  if (userData.tier === 'pro' && userData.tier_expires_at) {
+    const expiresAt = new Date(userData.tier_expires_at);
+    const now = new Date();
+    const msLeft = expiresAt - now;
+    if (msLeft > 0) {
+      const daysLeft = Math.ceil(msLeft / (1000 * 60 * 60 * 24));
+      expiryLine = `<div style="margin-top:6px;">Bitmesine kalan: <strong>${daysLeft} gün</strong> (${formatDate(userData.tier_expires_at)})</div>`;
+    } else {
+      expiryLine = `<div style="margin-top:6px; color:#f87171;">Pro süresi doldu: ${formatDate(userData.tier_expires_at)}</div>`;
+    }
+  }
+
+  let usageLine = '';
+  if (!userData.proActive) {
+    const used = userData.usedMinutesThisMonth || 0;
+    const cap = userData.capMinutes || 240;
+    const pct = Math.min(100, Math.round((used / cap) * 100));
+    usageLine = `
+      <div style="margin-top:10px;">
+        <div style="display:flex; justify-content:space-between; font-size:12px; color:#9ca3af; margin-bottom:4px;">
+          <span>Bu ay kullanım</span><span>${used} / ${cap} dk</span>
+        </div>
+        <div style="background:#2c2f38; border-radius:4px; height:6px; overflow:hidden;">
+          <div style="background:${pct >= 100 ? '#f87171' : '#4f7dfa'}; height:100%; width:${pct}%;"></div>
+        </div>
+      </div>
+    `;
+  }
+
+  tierInfo.innerHTML = `
+    <span class="badge ${tierBadgeClass}">${tierLabel}</span>
+    ${expiryLine}
+    ${usageLine}
+  `;
+}
+
+document.getElementById('tierSaveBtn').onclick = async () => {
+  const tier = document.getElementById('tierSelect').value;
+  const months = document.getElementById('tierMonthsInput').value;
+  const msgBox = document.getElementById('tierSaveMsg');
+  msgBox.textContent = '';
+  msgBox.style.color = '';
+
+  if (!currentModalUserId) return;
+
+  try {
+    const resp = await fetch(API_BASE + '/admin/users/' + currentModalUserId + '/set-tier', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ tier, months: tier === 'pro' ? Number(months) : undefined }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      msgBox.style.color = '#f87171';
+      msgBox.textContent = data.error || 'Kaydedilemedi.';
+      return;
+    }
+    msgBox.style.color = '#4ade80';
+    msgBox.textContent = 'Kaydedildi.';
+    // Tier bilgisini ve tabloyu tazele.
+    const userData = await apiGet('/admin/users/' + currentModalUserId);
+    renderTierInfo(userData);
+    loadUsers();
+  } catch (e) {
+    msgBox.style.color = '#f87171';
+    msgBox.textContent = 'Sunucuya ulaşılamadı: ' + e.message;
+  }
+};
 
 document.getElementById('modalCloseBtn').onclick = () => {
   document.getElementById('modalOverlay').classList.add('hidden');

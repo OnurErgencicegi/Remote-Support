@@ -33,7 +33,7 @@ async function verifyUser(email, plainPassword) {
 function getUserById(id) {
   const user = db
     .prepare(
-      "SELECT id, email, tier, role, rustdesk_id, is_active, created_at FROM users WHERE id = ?"
+      "SELECT id, email, tier, tier_expires_at, role, rustdesk_id, is_active, created_at FROM users WHERE id = ?"
     )
     .get(id);
   return user || null;
@@ -47,8 +47,27 @@ function setRustdeskId(userId, rustdeskId) {
   db.prepare("UPDATE users SET rustdesk_id = ? WHERE id = ?").run(rustdeskId, userId);
 }
 
-function setTier(userId, tier) {
-  db.prepare("UPDATE users SET tier = ? WHERE id = ?").run(tier, userId);
+/**
+ * RemoteSupport: tier ayarlar. tier='pro' verilirse ve months belirtilirse
+ * tier_expires_at = simdi + months ay olarak hesaplanir. tier='free'
+ * verilirse tier_expires_at NULL'a cekilir (pro suresi anlami kalmaz).
+ */
+function setTier(userId, tier, months = null) {
+  if (tier === "pro" && months) {
+    const expiresAt = new Date();
+    expiresAt.setMonth(expiresAt.getMonth() + Number(months));
+    db.prepare("UPDATE users SET tier = ?, tier_expires_at = ? WHERE id = ?").run(
+      tier,
+      expiresAt.toISOString(),
+      userId
+    );
+  } else if (tier === "free") {
+    db.prepare("UPDATE users SET tier = 'free', tier_expires_at = NULL WHERE id = ?").run(
+      userId
+    );
+  } else {
+    db.prepare("UPDATE users SET tier = ? WHERE id = ?").run(tier, userId);
+  }
 }
 
 function setActive(userId, isActive) {

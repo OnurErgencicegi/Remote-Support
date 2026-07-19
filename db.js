@@ -16,6 +16,22 @@ db.exec(`
     is_active INTEGER NOT NULL DEFAULT 1
   );
 `);
+
+// RemoteSupport: connections tablosu daha once elle/migration ile
+// olusturulmustu, repoda hic CREATE TABLE'i yoktu - guvenlik icin burada
+// da tanimliyoruz (IF NOT EXISTS, mevcut VPS verisine dokunmaz).
+db.exec(`
+  CREATE TABLE IF NOT EXISTS connections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    controller_user_id INTEGER NOT NULL,
+    host_peer_id TEXT NOT NULL,
+    started_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    expires_at TEXT NOT NULL,
+    conn_token TEXT,
+    UNIQUE(controller_user_id, host_peer_id)
+  );
+`);
+
 try {
   db.exec(`ALTER TABLE connections ADD COLUMN conn_token TEXT`);
 } catch (e) {
@@ -31,6 +47,16 @@ try {
 } catch (e) {
   // duplicate column bekleniyor, sorun degil.
 }
+try {
+  // RemoteSupport: pro tier'in ne zaman bitecegini tutar. NULL = pro
+  // degil / suresiz degil. tier='pro' VE tier_expires_at gelecekte ise
+  // kullanici gercekten aktif pro sayilir (bkz. connectionsDb.js
+  // isProActive()).
+  db.exec(`ALTER TABLE users ADD COLUMN tier_expires_at TEXT`);
+} catch (e) {
+  // duplicate column bekleniyor, sorun degil.
+}
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS login_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -90,4 +116,21 @@ db.exec(`
     used INTEGER NOT NULL DEFAULT 0
   );
 `);
+
+// RemoteSupport: free tier'in aylik 4 saat (240dk) kullanim tavanini takip
+// etmek icin. connections tablosu ayni (user,host) ciftinde UPDATE ile
+// uzerine yazildigi icin gecmis kullanim orada kaybolur - bu yuzden ayri,
+// sadece INSERT edilen (hic UPDATE edilmeyen) bir log tablosu gerekiyor.
+// Her yeni 30dk'lik oturum bloğu basladiginda (ilk baglanti ya da suresi
+// dolup yenilenen baglanti) buraya bir satir eklenir.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS usage_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    controller_user_id INTEGER NOT NULL,
+    host_peer_id TEXT NOT NULL,
+    minutes INTEGER NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
+`);
+
 module.exports = { db, logLoginAttempt, getHostPassword, setHostPassword };

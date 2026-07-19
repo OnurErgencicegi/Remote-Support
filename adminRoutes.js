@@ -9,8 +9,11 @@
 // varsayılan değeri gösterilir - eksik kolon yüzünden hata FIRLATILMAZ.
 
 const express = require("express");
+const os = require("os");
 const { db } = require("./db");
 const { createSession, checkPassword, requireAdmin } = require("./adminAuth");
+const { setTier } = require("./authDb");
+const { getMonthlyUsageMinutes, isProActive, FREE_MONTHLY_CAP_MINUTES } = require("./connectionsDb");
 
 const router = express.Router();
 
@@ -36,7 +39,7 @@ router.get("/users", (req, res) => {
       rows = db
         .prepare(
           `SELECT id, email, role, email_verified, created_at,
-                  COALESCE(tier, 'free') as tier
+                  COALESCE(tier, 'free') as tier, tier_expires_at
            FROM users
            WHERE email LIKE ?
            ORDER BY created_at DESC`
@@ -46,15 +49,75 @@ router.get("/users", (req, res) => {
       rows = db
         .prepare(
           `SELECT id, email, role, email_verified, created_at,
-                  COALESCE(tier, 'free') as tier
+                  COALESCE(tier, 'free') as tier, tier_expires_at
            FROM users
            ORDER BY created_at DESC`
         )
         .all();
     }
-    return res.json({ users: rows });
+    // RemoteSupport: her kullanıcı için gerçekten aktif pro mu (süresi
+    // dolmamış mı) bilgisini ekliyoruz - client tarafında "Pro" etiketi
+    // gösterip gösterilmeyeceğine bunun üzerinden karar veriliyor.
+    const enriched = rows.map((u) => ({
+      ...u,
+      proActive: isProActive(u),
+    }));
+    return res.json({ users: enriched });
   } catch (err) {
     console.error("admin/users hata:", err.message);
+    return res.status(500).json({ error: "Sunucu hatası." });
+  }
+});
+
+// POST /admin/users/:id/set-tier { tier: 'free'|'pro', months?: number }
+// tier='pro' ise months zorunlu (kaç ay pro verileceği). tier='free' ise
+// months yok sayılır, pro süresi hemen temizlenir.
+router.post("/users/:id/set-tier", (req, res) => {
+  try {
+    const userId = req.params.id;
+    const { tier, months } = req.body || {};
+
+    if (tier !== "free" && tier !== "pro") {
+      return res.status(400).json({ error: "tier 'free' veya 'pro' olmalı." });
+    }
+    if (tier === "pro" && (!months || Number(months) <= 0)) {
+      return res.status(400).json({ error: "Pro için months (1 veya üzeri) gerekli." });
+    }
+
+    setTier(userId, tier, tier === "pro" ? Number(months) : null);
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("admin/users/:id/set-tier hata:", err.message);
+    return res.status(500).json({ error: "Sunucu hatası." });
+  }
+});
+
+// GET /admin/users/:id - tek kullanıcının tier + kullanım özeti
+router.get("/users/:id", (req, res) => {
+  try {
+    const userId = req.params.id;
+    const user = db
+      .prepare(
+        `SELECT id, email, role, email_verified, created_at,
+                COALESCE(tier, 'free') as tier, tier_expires_at
+         FROM users WHERE id = ?`
+      )
+      .get(userId);
+
+    if (!user) {
+      return res.status(404).json({ error: "Kullanıcı bulunamadı." });
+    }
+
+    const usedMinutesThisMonth = getMonthlyUsageMinutes(userId);
+
+    return res.json({
+      ...user,
+      proActive: isProActive(user),
+      usedMinutesThisMonth,
+      capMinutes: FREE_MONTHLY_CAP_MINUTES,
+    });
+  } catch (err) {
+    console.error("admin/users/:id hata:", err.message);
     return res.status(500).json({ error: "Sunucu hatası." });
   }
 });
@@ -200,6 +263,39 @@ router.get("/stats", (req, res) => {
     });
   } catch (err) {
     console.error("admin/stats hata:", err.message);
+    return res.status(500).json({ error: "Sunucu hatası." });
+  }
+});
+
+// GET /admin/system-stats - VPS'in anlık CPU/RAM kullanımı (Node'un
+// yerleşik 'os' modülü, ek paket gerekmez).
+router.get("/system-stats", (req, res) => {
+  try {
+    const totalMemBytes = os.totalmem();
+    const freeMemBytes = os.freemem();
+    const usedMemBytes = totalMemBytes - freeMemBytes;
+    const memUsedPercent = Math.round((usedMemBytes / totalMemBytes) * 100);
+
+    // RemoteSupport: os.loadavg() Linux'a özgü anlamlı deger dondurur
+    // (1/5/15 dakikalik ortalama yuk), Windows'ta hep [0,0,0] doner -
+    // VPS Linux oldugu icin sorun yok. cpuCount'a bolerek yuzdeye
+    // yakin bir gosterge uretiyoruz (tam dogru CPU% degil, kaba bir
+    // tahmin - kesin deger icin ornekleme arasi delta gerekir, panelin
+    // amacina gore bu yeterli).
+    const cpuCount = os.cpus().length;
+    const load1 = os.loadavg()[0];
+    const cpuLoadPercent = Math.min(100, Math.round((load1 / cpuCount) * 100));
+
+    return res.json({
+      cpuCount,
+      cpuLoadPercent,
+      memTotalMB: Math.round(totalMemBytes / 1024 / 1024),
+      memUsedMB: Math.round(usedMemBytes / 1024 / 1024),
+      memUsedPercent,
+      uptimeSeconds: Math.round(os.uptime()),
+    });
+  } catch (err) {
+    console.error("admin/system-stats hata:", err.message);
     return res.status(500).json({ error: "Sunucu hatası." });
   }
 });

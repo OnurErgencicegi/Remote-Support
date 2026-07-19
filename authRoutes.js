@@ -14,7 +14,14 @@ const {
   resetPasswordWithToken,
   getUserByEmail,
 } = require("./authDb");
-const { startConnection, getConnectionStatus, verifyConnToken } = require("./connectionsDb");
+const {
+  startConnection,
+  getConnectionStatus,
+  verifyConnToken,
+  getMonthlyUsageMinutes,
+  isProActive,
+  FREE_MONTHLY_CAP_MINUTES,
+} = require("./connectionsDb");
 const { sendVerificationEmail, sendPasswordResetEmail } = require("./mail");
 const logger = require("./logger");
 
@@ -180,6 +187,39 @@ router.get("/me", requireAuth, (req, res) => {
   });
 });
 
+// RemoteSupport: client'ın (Flutter) tier durumunu ve aylık kalan süreyi
+// göstermesi için. GET /auth/me/usage
+router.get("/me/usage", requireAuth, (req, res) => {
+  try {
+    const user = getUserById(req.user.userId);
+    if (!user) return res.status(404).json({ error: "Kullanici bulunamadi." });
+
+    const proActive = isProActive(user);
+    const usedMinutes = proActive ? null : getMonthlyUsageMinutes(user.id);
+    const remainingMinutes = proActive
+      ? null
+      : Math.max(0, FREE_MONTHLY_CAP_MINUTES - usedMinutes);
+
+    let proDaysLeft = null;
+    if (user.tier === "pro" && user.tier_expires_at) {
+      const msLeft = new Date(user.tier_expires_at).getTime() - Date.now();
+      proDaysLeft = msLeft > 0 ? Math.ceil(msLeft / (1000 * 60 * 60 * 24)) : 0;
+    }
+
+    res.json({
+      tier: user.tier,
+      proActive,
+      proDaysLeft,
+      usedMinutesThisMonth: usedMinutes,
+      remainingMinutesThisMonth: remainingMinutes,
+      capMinutes: FREE_MONTHLY_CAP_MINUTES,
+    });
+  } catch (err) {
+    logger.error("me/usage hatasi:", err.message);
+    res.status(500).json({ error: "Sunucu hatasi." });
+  }
+});
+
 router.post("/me/rustdesk-id", requireAuth, (req, res) => {
   const { rustdeskId } = req.body || {};
   if (!rustdeskId) {
@@ -287,12 +327,21 @@ router.post("/connections/start", requireAuth, (req, res) => {
 
     if (!result.allowed) {
       logger.info(
-        "Baglanti reddedildi (tekrar kullanim): user=" + req.user.email + " host=" + hostPeerId
+        "Baglanti reddedildi (" + result.reason + "): user=" + req.user.email + " host=" + hostPeerId
       );
+      const messages = {
+        concurrent_limit:
+          "Free tier'da aynı anda sadece 1 bilgisayara bağlanabilirsiniz. Önce diğer bağlantınızın süresi dolmalı.",
+        monthly_limit:
+          "Bu ayki ücretsiz kullanım sınırınıza (4 saat) ulaştınız. Pro tier'e geçerek sınırsız kullanabilirsiniz.",
+      };
       return res.status(403).json({
-        error: "Bu bilgisayara daha once baglandiniz, tekrar baglanamazsiniz.",
+        error: messages[result.reason] || "Bu bilgisayara daha once baglandiniz, tekrar baglanamazsiniz.",
         reason: result.reason,
         expiresAt: result.expiresAt,
+        activeHostPeerId: result.activeHostPeerId,
+        usedMinutes: result.usedMinutes,
+        capMinutes: result.capMinutes,
       });
     }
 
