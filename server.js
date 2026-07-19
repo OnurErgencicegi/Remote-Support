@@ -6,8 +6,10 @@
 
 const express = require("express");
 const cors = require("cors");
+const path = require("path");
 const logger = require("./logger");
-const { router: authRouter }  = require("./authRoutes");
+const { router: authRouter } = require("./authRoutes");
+const { router: adminRouter } = require("./adminRoutes");
 
 const PORT = process.env.PORT || 4000;
 
@@ -24,6 +26,11 @@ app.use((err, req, res, next) => {
 });
 
 app.use("/auth", authRouter);
+app.use("/admin", adminRouter);
+
+// RemoteSupport: admin.html (dashboard) ve ileride eklenecek diğer statik
+// dosyalar için. http://<vps-ip>:4000/admin.html şeklinde erişilir.
+app.use(express.static(path.join(__dirname, "public")));
 
 app.get("/health", (req, res) => {
   res.json({ status: "ok", service: "auth-server" });

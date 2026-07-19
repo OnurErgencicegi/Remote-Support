@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<title>RemoteSupport — Admin Panel</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Segoe UI", Arial, sans-serif;
+    background: #0f1115;
+    color: #e4e6eb;
+    margin: 0;
+    padding: 0;
+  }
+  .hidden { display: none !important; }
+
+  /* --- Login --- */
+  #loginScreen {
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  #loginBox {
+    background: #1a1d24;
+    padding: 32px;
+    border-radius: 12px;
+    width: 320px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  }
+  #loginBox h1 { font-size: 18px; margin: 0 0 20px; text-align: center; }
+  #loginBox input {
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid #2c2f38;
+    background: #0f1115;
+    color: #e4e6eb;
+    margin-bottom: 12px;
+    font-size: 14px;
+  }
+  #loginBox button {
+    width: 100%;
+    padding: 10px;
+    border-radius: 8px;
+    border: none;
+    background: #4f7dfa;
+    color: white;
+    font-size: 14px;
+    cursor: pointer;
+    font-weight: 600;
+  }
+  #loginBox button:hover { background: #3d6bf0; }
+  #loginError { color: #f87171; font-size: 13px; margin-top: 8px; text-align: center; }
+
+  /* --- Dashboard --- */
+  #dashboard { padding: 24px 32px; max-width: 1200px; margin: 0 auto; }
+  header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+  header h1 { font-size: 20px; margin: 0; }
+  #logoutBtn {
+    background: transparent;
+    border: 1px solid #2c2f38;
+    color: #9ca3af;
+    padding: 6px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  #logoutBtn:hover { border-color: #4f7dfa; color: #e4e6eb; }
+
+  .stats { display: flex; gap: 16px; margin-bottom: 28px; flex-wrap: wrap; }
+  .stat-card {
+    background: #1a1d24;
+    border-radius: 10px;
+    padding: 16px 20px;
+    flex: 1;
+    min-width: 140px;
+  }
+  .stat-card .value { font-size: 24px; font-weight: 700; }
+  .stat-card .label { font-size: 12px; color: #9ca3af; margin-top: 4px; }
+
+  .section {
+    background: #1a1d24;
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 24px;
+  }
+  .section h2 { font-size: 15px; margin: 0 0 14px; color: #cbd5e1; }
+
+  .filters { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+  .filters input {
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid #2c2f38;
+    background: #0f1115;
+    color: #e4e6eb;
+    font-size: 13px;
+  }
+  .filters input[type="text"] { flex: 1; min-width: 160px; }
+  .filters button {
+    padding: 8px 16px;
+    border-radius: 6px;
+    border: none;
+    background: #2c2f38;
+    color: #e4e6eb;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .filters button:hover { background: #3a3e4a; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th {
+    text-align: left;
+    padding: 8px 10px;
+    color: #9ca3af;
+    font-weight: 600;
+    border-bottom: 1px solid #2c2f38;
+    font-size: 12px;
+    text-transform: uppercase;
+  }
+  td { padding: 10px; border-bottom: 1px solid #22252d; }
+  tr.clickable { cursor: pointer; }
+  tr.clickable:hover { background: #22252d; }
+
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .badge-active { background: #14532d; color: #4ade80; }
+  .badge-expired { background: #2c2f38; color: #9ca3af; }
+  .badge-verified { background: #14532d; color: #4ade80; }
+  .badge-unverified { background: #451a1a; color: #f87171; }
+  .badge-tier { background: #1e3a8a; color: #93c5fd; }
+
+  #emptyMsg { color: #6b7280; font-size: 13px; padding: 12px 0; text-align: center; }
+
+  /* Modal */
+  #modalOverlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+    display: flex; align-items: center; justify-content: center; z-index: 50;
+  }
+  #modalBox {
+    background: #1a1d24; border-radius: 12px; padding: 24px;
+    width: 600px; max-height: 80vh; overflow-y: auto;
+  }
+  #modalBox h2 { margin-top: 0; font-size: 16px; }
+  #modalCloseBtn {
+    float: right; background: transparent; border: none; color: #9ca3af;
+    cursor: pointer; font-size: 18px;
+  }
+  .pagination { display: flex; gap: 8px; justify-content: center; margin-top: 14px; }
+  .pagination button {
+    padding: 6px 12px; border-radius: 6px; border: 1px solid #2c2f38;
+    background: #0f1115; color: #e4e6eb; cursor: pointer; font-size: 12px;
+  }
+  .pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="loginScreen">
+  <div id="loginBox">
+    <h1>RemoteSupport Admin</h1>
+    <input type="password" id="passwordInput" placeholder="Admin şifresi" />
+    <button id="loginBtn">Giriş Yap</button>
+    <div id="loginError"></div>
+  </div>
+</div>
+
+<!-- DASHBOARD -->
+<div id="dashboard" class="hidden">
+  <header>
+    <h1>RemoteSupport — Admin Panel</h1>
+    <button id="logoutBtn">Çıkış Yap</button>
+  </header>
+
+  <div class="stats" id="statsRow"></div>
+
+  <div class="section">
+    <h2>Kullanıcılar</h2>
+    <div class="filters">
+      <input type="text" id="userSearch" placeholder="Email ile ara..." />
+      <button id="userSearchBtn">Ara</button>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Email</th><th>Rol</th><th>Tier</th><th>Doğrulanmış mı</th><th>Kayıt Tarihi</th>
+        </tr>
+      </thead>
+      <tbody id="usersTableBody"></tbody>
+    </table>
+    <div id="usersEmptyMsg" class="hidden" id="usersEmpty">Kullanıcı bulunamadı.</div>
+  </div>
+
+  <div class="section">
+    <h2>Bağlantı Geçmişi</h2>
+    <div class="filters">
+      <input type="text" id="filterUser" placeholder="Controller email..." />
+      <input type="text" id="filterHost" placeholder="Host ID..." />
+      <input type="date" id="filterFrom" />
+      <input type="date" id="filterTo" />
+      <button id="connSearchBtn">Filtrele</button>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Controller</th><th>Host ID</th><th>Başlangıç</th><th>Süre (dk)</th><th>Durum</th>
+        </tr>
+      </thead>
+      <tbody id="connectionsTableBody"></tbody>
+    </table>
+    <div id="connEmptyMsg" class="hidden">Bağlantı bulunamadı.</div>
+    <div class="pagination">
+      <button id="prevPageBtn">‹ Önceki</button>
+      <span id="pageInfo" style="align-self:center; font-size:12px; color:#9ca3af;"></span>
+      <button id="nextPageBtn">Sonraki ›</button>
+    </div>
+  </div>
+</div>
+
+<!-- USER DETAIL MODAL -->
+<div id="modalOverlay" class="hidden">
+  <div id="modalBox">
+    <button id="modalCloseBtn">✕</button>
+    <h2 id="modalTitle"></h2>
+    <table>
+      <thead>
+        <tr><th>Host ID</th><th>Başlangıç</th><th>Süre (dk)</th><th>Durum</th></tr>
+      </thead>
+      <tbody id="modalTableBody"></tbody>
+    </table>
+    <div id="modalEmptyMsg" class="hidden">Bu kullanıcının hiç bağlantısı yok.</div>
+  </div>
+</div>
+
+<script>
+// RemoteSupport Admin Panel - tek dosya, framework yok, sade fetch tabanlı.
+const API_BASE = ''; // aynı origin üzerinden /admin/... çağrılır
+
+let adminToken = localStorage.getItem('rs_admin_token') || null;
+let connPage = 1;
+const connPageSize = 30;
+
+function authHeaders() {
+  return { 'Authorization': 'Bearer ' + adminToken, 'Content-Type': 'application/json' };
+}
+
+function showDashboard() {
+  document.getElementById('loginScreen').classList.add('hidden');
+  document.getElementById('dashboard').classList.remove('hidden');
+  loadStats();
+  loadUsers();
+  loadConnections();
+}
+
+function showLogin() {
+  document.getElementById('dashboard').classList.add('hidden');
+  document.getElementById('loginScreen').classList.remove('hidden');
+}
+
+document.getElementById('loginBtn').onclick = async () => {
+  const password = document.getElementById('passwordInput').value;
+  const errBox = document.getElementById('loginError');
+  errBox.textContent = '';
+  try {
+    const resp = await fetch(API_BASE + '/admin/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password })
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      errBox.textContent = data.error || 'Giriş başarısız.';
+      return;
+    }
+    adminToken = data.token;
+    localStorage.setItem('rs_admin_token', adminToken);
+    showDashboard();
+  } catch (e) {
+    errBox.textContent = 'Sunucuya ulaşılamadı: ' + e.message;
+  }
+};
+
+document.getElementById('passwordInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') document.getElementById('loginBtn').click();
+});
+
+document.getElementById('logoutBtn').onclick = () => {
+  adminToken = null;
+  localStorage.removeItem('rs_admin_token');
+  showLogin();
+};
+
+async function apiGet(path) {
+  const resp = await fetch(API_BASE + path, { headers: authHeaders() });
+  if (resp.status === 401) {
+    adminToken = null;
+    localStorage.removeItem('rs_admin_token');
+    showLogin();
+    throw new Error('Oturum süresi doldu.');
+  }
+  return resp.json();
+}
+
+async function loadStats() {
+  try {
+    const data = await apiGet('/admin/stats');
+    const row = document.getElementById('statsRow');
+    row.innerHTML = `
+      <div class="stat-card"><div class="value">${data.totalUsers}</div><div class="label">Toplam Kullanıcı</div></div>
+      <div class="stat-card"><div class="value">${data.verifiedUsers}</div><div class="label">Doğrulanmış</div></div>
+      <div class="stat-card"><div class="value">${data.activeConnections}</div><div class="label">Aktif Bağlantı</div></div>
+      <div class="stat-card"><div class="value">${data.totalConnections}</div><div class="label">Toplam Bağlantı</div></div>
+    `;
+  } catch (e) { /* sessiz geç, oturum kontrolü zaten apiGet'te */ }
+}
+
+async function loadUsers() {
+  const search = document.getElementById('userSearch').value.trim();
+  const qs = search ? '?search=' + encodeURIComponent(search) : '';
+  try {
+    const data = await apiGet('/admin/users' + qs);
+    const tbody = document.getElementById('usersTableBody');
+    const emptyMsg = document.getElementById('usersEmptyMsg') || document.getElementById('usersEmpty');
+    tbody.innerHTML = '';
+    if (!data.users || data.users.length === 0) {
+      if (emptyMsg) emptyMsg.classList.remove('hidden');
+      return;
+    }
+    if (emptyMsg) emptyMsg.classList.add('hidden');
+    data.users.forEach(u => {
+      const tr = document.createElement('tr');
+      tr.className = 'clickable';
+      tr.onclick = () => openUserDetail(u.id, u.email);
+      tr.innerHTML = `
+        <td>${escapeHtml(u.email)}</td>
+        <td>${escapeHtml(u.role)}</td>
+        <td><span class="badge badge-tier">${escapeHtml(u.tier)}</span></td>
+        <td><span class="badge ${u.email_verified ? 'badge-verified' : 'badge-unverified'}">${u.email_verified ? 'Evet' : 'Hayır'}</span></td>
+        <td>${formatDate(u.created_at)}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+  } catch (e) { console.error(e); }
+}
+
+async function loadConnections() {
+  const user = document.getElementById('filterUser').value.trim();
+  const host = document.getElementById('filterHost').value.trim();
+  const from = document.getElementById('filterFrom').value;
+  const to = document.getElementById('filterTo').value;
+
+  const params = new URLSearchParams();
+  if (user) params.set('user', user);
+  if (host) params.set('host', host);
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  params.set('page', connPage);
+  params.set('pageSize', connPageSize);
+
+  try {
+    const data = await apiGet('/admin/connections?' + params.toString());
+    const tbody = document.getElementById('connectionsTableBody');
+    const emptyMsg = document.getElementById('connEmptyMsg');
+    tbody.innerHTML = '';
+    if (!data.connections || data.connections.length === 0) {
+      emptyMsg.classList.remove('hidden');
+    } else {
+      emptyMsg.classList.add('hidden');
+      data.connections.forEach(c => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${escapeHtml(c.controller_email)}</td>
+          <td>${escapeHtml(c.host_peer_id)}</td>
+          <td>${formatDate(c.started_at)}</td>
+          <td>${c.durationMinutes}</td>
+          <td><span class="badge ${c.active ? 'badge-active' : 'badge-expired'}">${c.active ? 'Aktif' : 'Süresi Doldu'}</span></td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+    const totalPages = Math.max(1, Math.ceil(data.total / connPageSize));
+    document.getElementById('pageInfo').textContent = `Sayfa ${connPage} / ${totalPages}`;
+    document.getElementById('prevPageBtn').disabled = connPage <= 1;
+    document.getElementById('nextPageBtn').disabled = connPage >= totalPages;
+  } catch (e) { console.error(e); }
+}
+
+async function openUserDetail(userId, email) {
+  document.getElementById('modalTitle').textContent = email + ' — Bağlantı Geçmişi';
+  const tbody = document.getElementById('modalTableBody');
+  const emptyMsg = document.getElementById('modalEmptyMsg');
+  tbody.innerHTML = '';
+  emptyMsg.classList.add('hidden');
+  document.getElementById('modalOverlay').classList.remove('hidden');
+
+  try {
+    const data = await apiGet('/admin/users/' + userId + '/connections');
+    if (!data.connections || data.connections.length === 0) {
+      emptyMsg.classList.remove('hidden');
+      return;
+    }
+    data.connections.forEach(c => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${escapeHtml(c.host_peer_id)}</td>
+        <td>${formatDate(c.started_at)}</td>
+        <td>${c.durationMinutes}</td>
+        <td><span class="badge ${c.active ? 'badge-active' : 'badge-expired'}">${c.active ? 'Aktif' : 'Süresi Doldu'}</span></td>
+      `;
+      tbody.appendChild(tr);
+    });
+  } catch (e) { console.error(e); }
+}
+
+document.getElementById('modalCloseBtn').onclick = () => {
+  document.getElementById('modalOverlay').classList.add('hidden');
+};
+document.getElementById('modalOverlay').onclick = (e) => {
+  if (e.target.id === 'modalOverlay') document.getElementById('modalOverlay').classList.add('hidden');
+};
+
+document.getElementById('userSearchBtn').onclick = loadUsers;
+document.getElementById('userSearch').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') loadUsers();
+});
+
+document.getElementById('connSearchBtn').onclick = () => { connPage = 1; loadConnections(); };
+document.getElementById('prevPageBtn').onclick = () => { if (connPage > 1) { connPage--; loadConnections(); } };
+document.getElementById('nextPageBtn').onclick = () => { connPage++; loadConnections(); };
+
+function formatDate(iso) {
+  if (!iso) return '-';
+  const d = new Date(iso);
+  return d.toLocaleString('tr-TR');
+}
+function escapeHtml(str) {
+  if (str === null || str === undefined) return '';
+  return String(str).replace(/[&<>"']/g, (m) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+
+// Sayfa açılışında: eldeki token'la doğrudan dashboard'u yükle, geçersizse
+// apiGet zaten 401'de login ekranına döndürecek.
+if (adminToken) {
+  showDashboard();
+} else {
+  showLogin();
+}
+</script>
+</body>
+</html>
